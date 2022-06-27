@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/PuerkitoBio/goquery"
+	"net/http"
 	"os"
 	"strings"
-
-	"github.com/gocolly/colly"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 	}
 
 	severity := GetSeverityByURL(url)
-	
+
 	// Only return a notification for success
 	if len(severity) > 0 {
 		fmt.Printf("[+] Returned: [%s]", severity)
@@ -35,30 +35,37 @@ func main() {
 
 func GetSeverityByURL(url string) string {
 
-	var text []string
-	// Limit the domain to guide results
-	c := colly.NewCollector(
-		colly.AllowedDomains("docs.bridgecrew.io"),
-	)
+	text := ""
+	res, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("[-] Error getting URL: [%s]", url)
+	}
 
-	// Grab the 2nd paragraph after the div class markdown-body
-	c.OnHTML("div.markdown-body p+p", func(e *colly.HTMLElement) {
-		s := strings.Split(e.Text, "\n")
-		text = append(text, s...)
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		fmt.Printf("[-] Status code: [%s] Status: [%s]", res.StatusCode, res.Status)
+		return ""
+	}
 
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		fmt.Printf("[-] Error Creating Document: [%s]", err)
+		return ""
+	}
+
+	doc.Find("div.markdown-body").Each(func(i int, s *goquery.Selection) {
+		p := s.Find("p")
+		p.Contents().Each(func(i int, s *goquery.Selection) {
+			if strings.Contains(s.Text(), "Severity:") {
+				text = s.Text()
+			}
+		})
 	})
 
-	err := c.Visit(url)
-	if err != nil {
-		fmt.Errorf("[-] Error: [%s] Url: [%s]", err, url)
-		return ""
-	}
-	
-	// Ensure the returned string contains the correct parsing
-	if !strings.Contains(text[2], "Severity:") {
-		fmt.Errorf("[-] Bad parsing for URL: [%s]", url)
+	if len(text) == 0 {
+		fmt.Printf("[-] No text found for selector. Url: [%s]", url)
 		return ""
 	}
 
-	return text[2]
+	return strings.TrimSpace(text)
 }
